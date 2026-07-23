@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Student Assignment Portal</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f9;
+        }
+
+        .container {
+            width: 500px;
+            margin: 50px auto;
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0px 0px 10px #ccc;
+        }
+
+        h2 {
+            text-align: center;
+            color: #1e3c72;
+        }
+
+        input {
+            width: 100%;
+            margin-bottom: 15px;
+            padding: 10px;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #1e88e5;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #1565c0;
+        }
+
+        #message {
+            margin-top: 15px;
+            text-align: center;
+            font-weight: bold;
+            color: green;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Student Assignment Portal</h2>
+
+    <form id="assignmentForm">
+        <input type="text" name="studentName" placeholder="Student Name" required>
+        <input type="text" name="rollNumber" placeholder="Roll Number" required>
+        <input type="text" name="subject" placeholder="Subject" required>
+        <input type="text" name="assignmentTitle" placeholder="Assignment Title" required>
+        <input type="file" name="assignmentFile" required>
+        <button type="submit">Submit Assignment</button>
+    </form>
+
+    <div id="message"></div>
+</div>
+
+<script>
+document.getElementById("assignmentForm").addEventListener("submit", async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+
+    const response = await fetch("/submit", {
+        method: "POST",
+        body: formData
+    });
+
+    const result = await response.json();
+    document.getElementById("message").innerText = result.message;
+});
+</script>
+
+</body>
+</html>

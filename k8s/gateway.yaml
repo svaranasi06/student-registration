@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: pe3-student-app-gateway
+  namespace: student-app
+  annotations:
+    networking.gke.io/certmap: pe3-private-gke-cert-map
+spec:
+  gatewayClassName: gke-l7-global-external-managed
+
+  addresses:
+    - type: NamedAddress
+      value: pe3-student-app-ip
+
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: test5.deltaintech.co.in
+      allowedRoutes:
+        namespaces:
+          from: Same

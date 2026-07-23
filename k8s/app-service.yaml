@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: student-registration-service
+  namespace: student-app
+spec:
+  type: ClusterIP
+  selector:
+    app: student-registration
+  ports:
+    - name: http
+      port: 80
+      targetPort: 5000

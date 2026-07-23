@@ -1,0 +1,8 @@
+node_modules/
+uploads/
+.env
+*.log
+gcs-key.json
+*.pem
+*.key
+kubeconfig
