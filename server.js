@@ -218,6 +218,7 @@ app.post("/submit", upload.single("assignmentFile"), async (req, res) => {
             rollNumber,
             subject,
             assignmentTitle,
+            assignmentDate,
             fileName,
             gcsPath
         ]);
