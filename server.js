@@ -52,6 +52,7 @@ async function initializeDatabase() {
             roll_number VARCHAR(50) NOT NULL,
             subject_name VARCHAR(100) NOT NULL,
             assignment_title VARCHAR(200) NOT NULL,
+            assignment_date DATE,
             file_name VARCHAR(255),
             gcs_path VARCHAR(500),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -59,6 +60,20 @@ async function initializeDatabase() {
     `;
 
     await pool.query(createTableSql);
+
+    const [columns] = await pool.query(`
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = ?
+          AND TABLE_NAME = 'assignments'
+          AND COLUMN_NAME = 'assignment_date'
+    `, [DB_NAME]);
+
+    if (columns.length === 0) {
+        await pool.query("ALTER TABLE assignments ADD COLUMN assignment_date DATE AFTER assignment_title");
+        console.log("assignment_date column added");
+    }
+
     console.log("Assignments table is ready");
 }
 
@@ -160,6 +175,13 @@ app.post("/submit", upload.single("assignmentFile"), async (req, res) => {
         const rollNumber = req.body.rollNumber;
         const subject = req.body.subject;
         const assignmentTitle = req.body.assignmentTitle;
+        const assignmentDate = req.body.assignmentDate;
+
+        if (!assignmentDate) {
+            return res.status(400).json({
+                message: "Assignment date is required"
+            });
+        }
 
         if (!req.file) {
             return res.status(400).json({
@@ -184,10 +206,11 @@ app.post("/submit", upload.single("assignmentFile"), async (req, res) => {
                 roll_number,
                 subject_name,
                 assignment_title,
+                assignment_date,
                 file_name,
                 gcs_path
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `;
 
         await pool.query(sql, [

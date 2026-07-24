@@ -79,14 +79,6 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
 
-          resources:
-            requests:
-              cpu: 500m
-              memory: 256Mi
-            limits:
-              cpu: 750m
-              memory: 512Mi
-
         - name: cloud-sql-auth-proxy
           image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
           args:
