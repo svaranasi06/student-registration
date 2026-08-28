@@ -5,7 +5,8 @@ metadata:
   namespace: student-app
 spec:
   replicas: 1
-
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: student-registration
