@@ -10,7 +10,7 @@ spec:
 
   addresses:
     - type: NamedAddress
-      value: pe3-student-app-ip
+      value: pe3-svaranasi-student-trn-ip
 
   listeners:
     - name: https

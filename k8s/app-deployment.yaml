@@ -40,28 +40,22 @@ spec:
               value: "3306"
 
             - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: student-app-secret
-                  key: DB_NAME
+              value: "studentdb"
 
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: student-app-secret
+                  name: student-db-credentials
                   key: DB_USER
 
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: student-app-secret
+                  name: student-db-credentials
                   key: DB_PASSWORD
 
             - name: BUCKET_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: student-app-secret
-                  key: BUCKET_NAME
+              value: "pe3-svaranasi-student-trn-files-1055111006872"
 
           readinessProbe:
             httpGet:
@@ -93,7 +87,7 @@ spec:
             - "--auto-iam-authn=false"
             - "--structured-logs"
             - "--port=3306"
-            - "pe3-devops-training-svaranasi:asia-south1:pe3-student-mysql"
+            - "pe3-devops-training-svaranasi:asia-south1:pe3-svaranasi-student-trn-mysql"
 
           securityContext:
             runAsNonRoot: true
