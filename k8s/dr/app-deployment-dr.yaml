@@ -1,0 +1,95 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: student-registration-dr
+  namespace: student-app
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: student-registration-dr
+
+  template:
+    metadata:
+      labels:
+        app: student-registration-dr
+        role: dr-standby
+
+    spec:
+      serviceAccountName: student-app-ksa
+
+      nodeSelector:
+        workload: student-app
+
+      containers:
+        - name: application
+          image: asia-south1-docker.pkg.dev/pe3-devops-training-svaranasi/pe3-app-images/student-registration:manual-v1
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 5000
+
+          env:
+            - name: PORT
+              value: "5000"
+
+            - name: DB_HOST
+              value: "127.0.0.1"
+
+            - name: DB_PORT
+              value: "3306"
+
+            - name: DB_NAME
+              value: "studentdb"
+
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: student-db-credentials
+                  key: DB_USER
+
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: student-db-credentials
+                  key: DB_PASSWORD
+
+            - name: BUCKET_NAME
+              value: "pe3-svaranasi-student-trn-files-1055111006872"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+        - name: cloud-sql-auth-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+          args:
+            - "--auto-iam-authn=false"
+            - "--structured-logs"
+            - "--port=3306"
+            - "pe3-devops-training-svaranasi:asia-south1:pe3-svaranasi-student-trn-mysql"
+
+          securityContext:
+            runAsNonRoot: true
