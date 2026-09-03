@@ -25,6 +25,14 @@ spec:
       nodeSelector:
         workload: student-app
 
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: student-registration
+
       containers:
         - name: application
           image: asia-south1-docker.pkg.dev/pe3-devops-training-svaranasi/pe3-app-images/student-registration:manual-v1
