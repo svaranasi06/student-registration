@@ -1,0 +1,17 @@
+apiVersion: networking.gke.io/v1
+kind: GCPBackendPolicy
+metadata:
+  name: student-registration-cloud-armor
+  namespace: student-app
+  labels:
+    app: student-registration
+spec:
+  default:
+    securityPolicy: student-registration-test5-waf
+    logging:
+      enabled: true
+      sampleRate: 1000000
+  targetRef:
+    group: ""
+    kind: Service
+    name: student-registration-service
