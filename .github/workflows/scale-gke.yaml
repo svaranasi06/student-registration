@@ -1,0 +1,179 @@
+name: Configure GKE Pod Autoscaling
+
+run-name: Scale GKE with min=${{ inputs.min_replicas }}, max=${{ inputs.max_replicas }}, CPU=${{ inputs.cpu_target }}% by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_replicas:
+        description: Minimum number of application Pods
+        required: true
+        default: "2"
+        type: choice
+        options:
+          - "2"
+          - "3"
+          - "4"
+
+      max_replicas:
+        description: Maximum number of application Pods
+        required: true
+        default: "5"
+        type: choice
+        options:
+          - "3"
+          - "4"
+          - "5"
+          - "6"
+          - "8"
+          - "10"
+
+      cpu_target:
+        description: Average CPU utilization target
+        required: true
+        default: "60"
+        type: choice
+        options:
+          - "50"
+          - "60"
+          - "70"
+          - "80"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  configure-autoscaling:
+    name: Configure HPA
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate scaling inputs
+        shell: bash
+        run: |
+          MIN_REPLICAS="${{ inputs.min_replicas }}"
+          MAX_REPLICAS="${{ inputs.max_replicas }}"
+          CPU_TARGET="${{ inputs.cpu_target }}"
+
+          if [ "$MIN_REPLICAS" -lt 2 ]; then
+            echo "Minimum replicas must be at least 2."
+            exit 1
+          fi
+
+          if [ "$MAX_REPLICAS" -lt "$MIN_REPLICAS" ]; then
+            echo "Maximum replicas must be greater than or equal to minimum replicas."
+            exit 1
+          fi
+
+          if [ "$CPU_TARGET" -lt 40 ] || [ "$CPU_TARGET" -gt 90 ]; then
+            echo "CPU target must be between 40 and 90."
+            exit 1
+          fi
+
+          echo "Scaling input validation passed."
+          echo "Minimum replicas: $MIN_REPLICAS"
+          echo "Maximum replicas: $MAX_REPLICAS"
+          echo "CPU target: $CPU_TARGET percent"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER }}
+          location: ${{ vars.GKE_LOCATION }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Configure Horizontal Pod Autoscaler
+        shell: bash
+        run: |
+          kubectl patch horizontalpodautoscaler student-registration-hpa \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            --type=merge \
+            --patch='{
+              "spec": {
+                "minReplicas": ${{ inputs.min_replicas }},
+                "maxReplicas": ${{ inputs.max_replicas }},
+                "metrics": [
+                  {
+                    "type": "Resource",
+                    "resource": {
+                      "name": "cpu",
+                      "target": {
+                        "type": "Utilization",
+                        "averageUtilization": ${{ inputs.cpu_target }}
+                      }
+                    }
+                  }
+                ]
+              }
+            }'
+
+      - name: Wait for minimum Pods
+        shell: bash
+        run: |
+          kubectl wait \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            --for=condition=Available \
+            deployment/student-registration \
+            --timeout=300s
+
+          for attempt in $(seq 1 30); do
+            READY_REPLICAS=$(kubectl get deployment student-registration \
+              --namespace="${{ vars.K8S_NAMESPACE }}" \
+              -o jsonpath='{.status.readyReplicas}')
+
+            READY_REPLICAS=${READY_REPLICAS:-0}
+
+            echo "Ready replicas: $READY_REPLICAS"
+
+            if [ "$READY_REPLICAS" -ge "${{ inputs.min_replicas }}" ]; then
+              echo "Minimum Pod count is ready."
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Minimum Pod count was not reached within the timeout."
+          exit 1
+
+      - name: Display scaling status
+        shell: bash
+        run: |
+          kubectl get deployment student-registration \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            -o wide
+
+          kubectl get horizontalpodautoscaler student-registration-hpa \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            -o wide
+
+          kubectl get pods \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            --selector=app=student-registration \
+            -o wide
+
+      - name: Add workflow summary
+        shell: bash
+        run: |
+          {
+            echo "## GKE Autoscaling Configuration"
+            echo ""
+            echo "- Minimum Pods: ${{ inputs.min_replicas }}"
+            echo "- Maximum Pods: ${{ inputs.max_replicas }}"
+            echo "- CPU target: ${{ inputs.cpu_target }}%"
+            echo "- Deployment: student-registration"
+            echo "- Namespace: ${{ vars.K8S_NAMESPACE }}"
+          } >> "$GITHUB_STEP_SUMMARY"
