@@ -61,7 +61,8 @@ jobs:
           kubectl apply \
             -f k8s/service-account.yaml \
             -f k8s/app-service.yaml \
-            -f k8s/hpa.yaml
+            -f k8s/hpa.yaml \
+            -f k8s/pod-disruption-budget.yaml
 
           sed \
             "s|asia-south1-docker.pkg.dev/pe3-devops-training-svaranasi/pe3-app-images/student-registration:manual-v1|$IMAGE:${GITHUB_SHA}|g" \
@@ -105,6 +106,10 @@ jobs:
             -o wide
 
           kubectl get horizontalpodautoscaler student-registration-hpa \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            -o wide
+
+          kubectl get poddisruptionbudget student-registration-pdb \
             --namespace="${{ vars.K8S_NAMESPACE }}" \
             -o wide
 

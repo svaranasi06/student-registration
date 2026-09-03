@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: student-registration-pdb
+  namespace: student-app
+  labels:
+    app: student-registration
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: student-registration
