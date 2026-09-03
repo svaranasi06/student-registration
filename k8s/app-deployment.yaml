@@ -4,9 +4,12 @@ metadata:
   name: student-registration
   namespace: student-app
 spec:
-  replicas: 1
+  replicas: 2
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: student-registration
@@ -76,10 +79,10 @@ spec:
 
           resources:
             requests:
-              cpu: 500m
+              cpu: 200m
               memory: 256Mi
             limits:
-              cpu: 750m
+              cpu: 500m
               memory: 512Mi
 
         - name: cloud-sql-auth-proxy
@@ -92,3 +95,11 @@ spec:
 
           securityContext:
             runAsNonRoot: true
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

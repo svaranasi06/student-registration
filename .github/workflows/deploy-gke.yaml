@@ -5,6 +5,8 @@ on:
     branches:
       - main
 
+  workflow_dispatch:
+
 permissions:
   contents: read
   id-token: write
@@ -14,6 +16,7 @@ env:
 
 jobs:
   deploy:
+    name: Build, deploy, and configure autoscaling
     runs-on: ubuntu-latest
 
     steps:
@@ -30,12 +33,19 @@ jobs:
         uses: google-github-actions/setup-gcloud@v3
 
       - name: Configure Docker for Artifact Registry
+        shell: bash
         run: |
-          gcloud auth configure-docker ${{ vars.GAR_LOCATION }}-docker.pkg.dev --quiet
+          gcloud auth configure-docker \
+            "${{ vars.GAR_LOCATION }}-docker.pkg.dev" \
+            --quiet
 
-      - name: Build and push image
+      - name: Build and push immutable application image
+        shell: bash
         run: |
-          docker build -t "$IMAGE:${GITHUB_SHA}" .
+          docker build \
+            -t "$IMAGE:${GITHUB_SHA}" \
+            .
+
           docker push "$IMAGE:${GITHUB_SHA}"
 
       - name: Get GKE credentials
@@ -45,12 +55,103 @@ jobs:
           location: ${{ vars.GKE_LOCATION }}
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Deploy application image
+      - name: Apply application and autoscaling manifests
+        shell: bash
+        run: |
+          kubectl apply \
+            -f k8s/service-account.yaml \
+            -f k8s/app-service.yaml \
+            -f k8s/app-deployment.yaml \
+            -f k8s/hpa.yaml
+
+      - name: Deploy the new application image
+        shell: bash
         run: |
           kubectl set image deployment/student-registration \
             application="$IMAGE:${GITHUB_SHA}" \
-            -n "${{ vars.K8S_NAMESPACE }}"
+            --namespace="${{ vars.K8S_NAMESPACE }}"
 
+      - name: Wait for successful rollout
+        shell: bash
+        run: |
           kubectl rollout status deployment/student-registration \
-            -n "${{ vars.K8S_NAMESPACE }}" \
-            --timeout=180s
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            --timeout=300s
+
+      - name: Wait for minimum application Pods
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            READY_REPLICAS=$(kubectl get deployment student-registration \
+              --namespace="${{ vars.K8S_NAMESPACE }}" \
+              -o jsonpath='{.status.readyReplicas}')
+
+            READY_REPLICAS=${READY_REPLICAS:-0}
+
+            echo "Ready replicas: $READY_REPLICAS"
+
+            if [ "$READY_REPLICAS" -ge 2 ]; then
+              echo "Minimum Pod count is ready."
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Two Ready Pods were not reached within the timeout."
+          exit 1
+
+      - name: Display deployment and autoscaling status
+        shell: bash
+        run: |
+          kubectl get deployment student-registration \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            -o wide
+
+          kubectl get horizontalpodautoscaler student-registration-hpa \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            -o wide
+
+          kubectl get pods \
+            --namespace="${{ vars.K8S_NAMESPACE }}" \
+            --selector=app=student-registration \
+            -o wide
+
+      - name: Verify public application health
+        shell: bash
+        run: |
+          for attempt in $(seq 1 20); do
+            STATUS_CODE=$(curl \
+              --silent \
+              --show-error \
+              --output /dev/null \
+              --write-out "%{http_code}" \
+              https://test5.deltaintech.co.in/health || true)
+
+            echo "Health status: $STATUS_CODE"
+
+            if [ "$STATUS_CODE" = "200" ]; then
+              echo "Public application health check passed."
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "Public application health check failed."
+          exit 1
+
+      - name: Add deployment summary
+        shell: bash
+        run: |
+          {
+            echo "## GKE Deployment and Autoscaling"
+            echo ""
+            echo "- Image: $IMAGE:${GITHUB_SHA}"
+            echo "- Initial Pods: 2"
+            echo "- HPA minimum Pods: 2"
+            echo "- HPA maximum Pods: 5"
+            echo "- HPA CPU target: 60%"
+            echo "- Deployment strategy: RollingUpdate"
+            echo "- Public health endpoint: Passed"
+          } >> "$GITHUB_STEP_SUMMARY"
