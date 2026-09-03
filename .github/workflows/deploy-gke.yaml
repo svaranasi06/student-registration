@@ -62,7 +62,8 @@ jobs:
             -f k8s/service-account.yaml \
             -f k8s/app-service.yaml \
             -f k8s/hpa.yaml \
-            -f k8s/pod-disruption-budget.yaml
+            -f k8s/pod-disruption-budget.yaml \
+            -f k8s/cloud-armor-backend-policy.yaml
 
           sed \
             "s|asia-south1-docker.pkg.dev/pe3-devops-training-svaranasi/pe3-app-images/student-registration:manual-v1|$IMAGE:${GITHUB_SHA}|g" \
