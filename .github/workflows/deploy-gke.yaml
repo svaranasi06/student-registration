@@ -55,22 +55,18 @@ jobs:
           location: ${{ vars.GKE_LOCATION }}
           project_id: ${{ vars.GCP_PROJECT_ID }}
 
-      - name: Apply application and autoscaling manifests
+      - name: Apply application with immutable image and autoscaling
         shell: bash
         run: |
           kubectl apply \
             -f k8s/service-account.yaml \
             -f k8s/app-service.yaml \
-            -f k8s/app-deployment.yaml \
             -f k8s/hpa.yaml
 
-      - name: Deploy the new application image
-        shell: bash
-        run: |
-          kubectl set image deployment/student-registration \
-            application="$IMAGE:${GITHUB_SHA}" \
-            --namespace="${{ vars.K8S_NAMESPACE }}"
-
+          sed \
+            "s|asia-south1-docker.pkg.dev/pe3-devops-training-svaranasi/pe3-app-images/student-registration:manual-v1|$IMAGE:${GITHUB_SHA}|g" \
+            k8s/app-deployment.yaml \
+            | kubectl apply -f -
       - name: Wait for successful rollout
         shell: bash
         run: |
