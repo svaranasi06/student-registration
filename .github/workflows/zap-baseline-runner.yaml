@@ -68,18 +68,27 @@ jobs:
           echo "Target health check failed."
           exit 1
 
-      - name: Create report directory
+      - name: Create writable report directory
         shell: bash
         run: |
           mkdir -p zap-reports
+          chmod 777 zap-reports
 
           date -u +%Y-%m-%dT%H:%M:%SZ \
             > zap-reports/scan-start.txt
 
+          echo "Report directory:"
+          ls -ld zap-reports
+
       - name: Run OWASP ZAP baseline scan
+        id: zap_scan
         shell: bash
+        continue-on-error: true
         run: |
+          set -o pipefail
+
           docker run --rm \
+            --user root \
             --volume "${{ github.workspace }}/zap-reports:/zap/wrk/:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
@@ -89,7 +98,15 @@ jobs:
             -J zap-baseline-report.json \
             -x zap-baseline-report.xml \
             -w zap-baseline-report.md \
-            -I
+            -I \
+            2>&1 | tee zap-reports/zap-console.log
+
+          ZAP_EXIT_CODE=${PIPESTATUS[0]}
+
+          echo "ZAP exit code: ${ZAP_EXIT_CODE}"
+          echo "exit_code=${ZAP_EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+          exit 0
 
       - name: Record scan completion
         if: always()
@@ -102,14 +119,31 @@ jobs:
         if: always()
         shell: bash
         run: |
-          ls -lh zap-reports
+          echo "Generated files:"
+          ls -lah zap-reports
 
-          test -s zap-reports/zap-baseline-report.html
-          test -s zap-reports/zap-baseline-report.json
-          test -s zap-reports/zap-baseline-report.xml
-          test -s zap-reports/zap-baseline-report.md
+          MISSING_REPORTS=0
 
-          echo "All four ZAP reports were generated."
+          for REPORT in \
+            zap-baseline-report.html \
+            zap-baseline-report.json \
+            zap-baseline-report.xml \
+            zap-baseline-report.md
+          do
+            if [ -s "zap-reports/${REPORT}" ]; then
+              echo "PASS: ${REPORT}"
+            else
+              echo "MISSING: ${REPORT}"
+              MISSING_REPORTS=1
+            fi
+          done
+
+          if [ "$MISSING_REPORTS" -ne 0 ]; then
+            echo "One or more required ZAP reports were not generated."
+            echo "Review zap-reports/zap-console.log for the scanner error."
+            exit 1
+          fi
+
 
       - name: Generate risk summary
         if: always()
@@ -117,49 +151,63 @@ jobs:
         run: |
           python3 - <<'PY'
           import json
+          import os
           from collections import Counter
           from pathlib import Path
 
           report_path = Path("zap-reports/zap-baseline-report.json")
+          summary_path = Path("zap-reports/risk-summary.md")
 
-          if not report_path.exists():
-              print("ZAP JSON report was not generated.")
-              raise SystemExit(0)
+          if not report_path.exists() or report_path.stat().st_size == 0:
+              summary_text = "\n".join([
+                  "## OWASP ZAP Baseline Result",
+                  "",
+                  "- Runner: ubuntu-latest",
+                  "- Scan type: Passive baseline",
+                  "- Result: ZAP JSON report was not generated",
+                  "- Review: zap-console.log",
+              ])
 
-          with report_path.open(encoding="utf-8") as handle:
-              report = json.load(handle)
+              summary_path.write_text(
+                  summary_text + "\n",
+                  encoding="utf-8",
+              )
 
-          counts = Counter()
+              print(summary_text)
+          else:
+              with report_path.open(encoding="utf-8") as handle:
+                  report = json.load(handle)
 
-          for site in report.get("site", []):
-              for alert in site.get("alerts", []):
-                  risk = alert.get("riskdesc", "Unknown").split(" ")[0]
-                  counts[risk] += 1
+              counts = Counter()
 
-          summary = [
-              "## OWASP ZAP Baseline Result",
-              "",
-              f"- Target: ${{ inputs.target_url }}",
-              "- Runner: ubuntu-latest",
-              "- Scan type: Passive baseline",
-              f"- High: {counts.get('High', 0)}",
-              f"- Medium: {counts.get('Medium', 0)}",
-              f"- Low: {counts.get('Low', 0)}",
-              f"- Informational: {counts.get('Informational', 0)}",
-          ]
+              for site in report.get("site", []):
+                  for alert in site.get("alerts", []):
+                      risk = alert.get("riskdesc", "Unknown").split(" ")[0]
+                      counts[risk] += 1
 
-          summary_text = "\n".join(summary)
+              summary_text = "\n".join([
+                  "## OWASP ZAP Baseline Result",
+                  "",
+                  f"- Target: {os.environ.get('ZAP_TARGET_URL', 'workflow input')}",
+                  "- Runner: ubuntu-latest",
+                  "- Scan type: Passive baseline",
+                  f"- High: {counts.get('High', 0)}",
+                  f"- Medium: {counts.get('Medium', 0)}",
+                  f"- Low: {counts.get('Low', 0)}",
+                  f"- Informational: {counts.get('Informational', 0)}",
+              ])
 
-          print(summary_text)
+              summary_path.write_text(
+                  summary_text + "\n",
+                  encoding="utf-8",
+              )
 
-          with open("zap-reports/risk-summary.md", "w", encoding="utf-8") as handle:
-              handle.write(summary_text + "\n")
-
-          with open(Path.home() / "zap-summary.md", "w", encoding="utf-8") as handle:
-              handle.write(summary_text + "\n")
+              print(summary_text)
           PY
 
-          cat "$HOME/zap-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          cat zap-reports/risk-summary.md >> "$GITHUB_STEP_SUMMARY"
+        env:
+          ZAP_TARGET_URL: ${{ inputs.target_url }}
 
       - name: Verify target health after scan
         if: always()
