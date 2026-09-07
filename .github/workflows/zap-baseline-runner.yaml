@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   zap-baseline:
@@ -67,154 +68,18 @@ jobs:
           echo "Target health check failed."
           exit 1
 
-      - name: Create report directory
-        shell: bash
-        run: |
-          mkdir -p zap-reports
-          date -u +%Y-%m-%dT%H:%M:%SZ > zap-reports/scan-start.txt
-
-      - name: Pull ZAP stable image
-        shell: bash
-        run: |
-          docker pull ghcr.io/zaproxy/zaproxy:stable
-
-      - name: Run ZAP inside container
-        id: zap_scan
-        shell: bash
-        run: |
-          set +e
-
-          docker create \
-            --name zap-baseline-container \
-            --user 0:0 \
-            ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py \
-            -t "${{ inputs.target_url }}" \
-            -m 2 \
-            -r zap-baseline-report.html \
-            -J zap-baseline-report.json \
-            -x zap-baseline-report.xml \
-            -w zap-baseline-report.md \
+      - name: Run official OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: ${{ inputs.target_url }}
+          docker_name: ghcr.io/zaproxy/zaproxy:stable
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allow_issue_writing: false
+          fail_action: false
+          artifact_name: zap-baseline-runner-report-${{ github.run_number }}
+          cmd_options: >-
+            -m 2
             -I
-
-          docker start --attach zap-baseline-container \
-            2>&1 | tee zap-reports/zap-console.log
-
-          ZAP_EXIT_CODE=${PIPESTATUS[0]}
-
-          echo "ZAP exit code: ${ZAP_EXIT_CODE}"
-          echo "exit_code=${ZAP_EXIT_CODE}" >> "$GITHUB_OUTPUT"
-
-          exit 0
-
-      - name: Copy reports from ZAP container
-        if: always()
-        shell: bash
-        run: |
-          echo "Copying reports from the ZAP container."
-
-          docker cp \
-            zap-baseline-container:/zap/wrk/. \
-            zap-reports/ || true
-
-          echo "Files copied from container:"
-          ls -lah zap-reports
-
-      - name: Remove ZAP container
-        if: always()
-        shell: bash
-        run: |
-          docker rm -f zap-baseline-container || true
-
-      - name: Record scan completion
-        if: always()
-        shell: bash
-        run: |
-          date -u +%Y-%m-%dT%H:%M:%SZ > zap-reports/scan-end.txt
-
-      - name: Verify generated reports
-        if: always()
-        shell: bash
-        run: |
-          echo "Generated files:"
-          ls -lah zap-reports
-
-          MISSING_REPORTS=0
-
-          for REPORT in \
-            zap-baseline-report.html \
-            zap-baseline-report.json \
-            zap-baseline-report.xml \
-            zap-baseline-report.md
-          do
-            if [ -s "zap-reports/${REPORT}" ]; then
-              echo "PASS: ${REPORT}"
-            else
-              echo "MISSING: ${REPORT}"
-              MISSING_REPORTS=1
-            fi
-          done
-
-          if [ "$MISSING_REPORTS" -ne 0 ]; then
-            echo "One or more required ZAP reports were not generated."
-            echo "Review zap-console.log in the artifact."
-            exit 1
-          fi
-
-      - name: Generate risk summary
-        if: always()
-        shell: bash
-        env:
-          ZAP_TARGET_URL: ${{ inputs.target_url }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          from collections import Counter
-          from pathlib import Path
-
-          report_path = Path("zap-reports/zap-baseline-report.json")
-          summary_path = Path("zap-reports/risk-summary.md")
-
-          if not report_path.exists() or report_path.stat().st_size == 0:
-              summary_lines = [
-                  "## OWASP ZAP Baseline Result",
-                  "",
-                  f"- Target: {os.environ['ZAP_TARGET_URL']}",
-                  "- Runner: ubuntu-latest",
-                  "- Scan type: Passive baseline",
-                  "- Result: Required JSON report was not generated",
-                  "- Review: zap-console.log",
-              ]
-          else:
-              with report_path.open(encoding="utf-8") as handle:
-                  report = json.load(handle)
-
-              counts = Counter()
-
-              for site in report.get("site", []):
-                  for alert in site.get("alerts", []):
-                      risk = alert.get("riskdesc", "Unknown").split(" ")[0]
-                      counts[risk] += 1
-
-              summary_lines = [
-                  "## OWASP ZAP Baseline Result",
-                  "",
-                  f"- Target: {os.environ['ZAP_TARGET_URL']}",
-                  "- Runner: ubuntu-latest",
-                  "- Scan type: Passive baseline",
-                  f"- High: {counts.get('High', 0)}",
-                  f"- Medium: {counts.get('Medium', 0)}",
-                  f"- Low: {counts.get('Low', 0)}",
-                  f"- Informational: {counts.get('Informational', 0)}",
-              ]
-
-          summary_text = "\n".join(summary_lines)
-          summary_path.write_text(summary_text + "\n", encoding="utf-8")
-          print(summary_text)
-          PY
-
-          cat zap-reports/risk-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Verify target health after scan
         if: always()
@@ -227,19 +92,15 @@ jobs:
             --write-out "%{http_code}" \
             "${{ inputs.target_url }}/health" || true)
 
-          echo "Post-scan health: HTTP ${STATUS_CODE}" \
-            | tee zap-reports/post-scan-health.txt
+          echo "Post-scan health: HTTP ${STATUS_CODE}"
+          echo "## Post-scan validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Target: ${{ inputs.target_url }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Runner: ubuntu-latest" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Scan type: OWASP ZAP passive baseline" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Post-scan health: HTTP ${STATUS_CODE}" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$STATUS_CODE" != "200" ]; then
             echo "Application health failed after the scan."
             exit 1
           fi
-
-      - name: Upload ZAP reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-baseline-runner-reports-${{ github.run_number }}
-          path: zap-reports/
-          if-no-files-found: error
-          retention-days: 14
