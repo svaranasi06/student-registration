@@ -1,0 +1,190 @@
+name: OWASP ZAP Baseline Runner
+
+run-name: ZAP baseline scan of ${{ inputs.target_url }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: Public URL of the temporary application
+        required: true
+        default: "http://35.200.135.9"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  zap-baseline:
+    name: Run ZAP on GitHub-hosted runner
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate target URL
+        shell: bash
+        run: |
+          TARGET_URL="${{ inputs.target_url }}"
+
+          case "$TARGET_URL" in
+            http://*|https://*)
+              echo "Target URL format is valid."
+              ;;
+            *)
+              echo "Target URL must begin with http:// or https://"
+              exit 1
+              ;;
+          esac
+
+          echo "Target: $TARGET_URL"
+
+      - name: Verify target health before scan
+        shell: bash
+        run: |
+          TARGET_URL="${{ inputs.target_url }}"
+
+          for attempt in $(seq 1 20); do
+            STATUS_CODE=$(curl \
+              --silent \
+              --show-error \
+              --output /dev/null \
+              --write-out "%{http_code}" \
+              "${TARGET_URL}/health" || true)
+
+            echo "Health attempt ${attempt}: HTTP ${STATUS_CODE}"
+
+            if [ "$STATUS_CODE" = "200" ]; then
+              echo "Target health check passed."
+              exit 0
+            fi
+
+            sleep 15
+          done
+
+          echo "Target health check failed."
+          exit 1
+
+      - name: Create report directory
+        shell: bash
+        run: |
+          mkdir -p zap-reports
+
+          date -u +%Y-%m-%dT%H:%M:%SZ \
+            > zap-reports/scan-start.txt
+
+      - name: Run OWASP ZAP baseline scan
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "${{ github.workspace }}/zap-reports:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t "${{ inputs.target_url }}" \
+            -m 2 \
+            -r zap-baseline-report.html \
+            -J zap-baseline-report.json \
+            -x zap-baseline-report.xml \
+            -w zap-baseline-report.md \
+            -I
+
+      - name: Record scan completion
+        if: always()
+        shell: bash
+        run: |
+          date -u +%Y-%m-%dT%H:%M:%SZ \
+            > zap-reports/scan-end.txt
+
+      - name: Verify generated reports
+        if: always()
+        shell: bash
+        run: |
+          ls -lh zap-reports
+
+          test -s zap-reports/zap-baseline-report.html
+          test -s zap-reports/zap-baseline-report.json
+          test -s zap-reports/zap-baseline-report.xml
+          test -s zap-reports/zap-baseline-report.md
+
+          echo "All four ZAP reports were generated."
+
+      - name: Generate risk summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from collections import Counter
+          from pathlib import Path
+
+          report_path = Path("zap-reports/zap-baseline-report.json")
+
+          if not report_path.exists():
+              print("ZAP JSON report was not generated.")
+              raise SystemExit(0)
+
+          with report_path.open(encoding="utf-8") as handle:
+              report = json.load(handle)
+
+          counts = Counter()
+
+          for site in report.get("site", []):
+              for alert in site.get("alerts", []):
+                  risk = alert.get("riskdesc", "Unknown").split(" ")[0]
+                  counts[risk] += 1
+
+          summary = [
+              "## OWASP ZAP Baseline Result",
+              "",
+              f"- Target: ${{ inputs.target_url }}",
+              "- Runner: ubuntu-latest",
+              "- Scan type: Passive baseline",
+              f"- High: {counts.get('High', 0)}",
+              f"- Medium: {counts.get('Medium', 0)}",
+              f"- Low: {counts.get('Low', 0)}",
+              f"- Informational: {counts.get('Informational', 0)}",
+          ]
+
+          summary_text = "\n".join(summary)
+
+          print(summary_text)
+
+          with open("zap-reports/risk-summary.md", "w", encoding="utf-8") as handle:
+              handle.write(summary_text + "\n")
+
+          with open(Path.home() / "zap-summary.md", "w", encoding="utf-8") as handle:
+              handle.write(summary_text + "\n")
+          PY
+
+          cat "$HOME/zap-summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify target health after scan
+        if: always()
+        shell: bash
+        run: |
+          STATUS_CODE=$(curl \
+            --silent \
+            --show-error \
+            --output /dev/null \
+            --write-out "%{http_code}" \
+            "${{ inputs.target_url }}/health" || true)
+
+          echo "Post-scan health: HTTP ${STATUS_CODE}" \
+            | tee zap-reports/post-scan-health.txt
+
+          if [ "$STATUS_CODE" != "200" ]; then
+            echo "Application health failed after the scan."
+            exit 1
+          fi
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-runner-reports-${{ github.run_number }}
+          path: zap-reports/
+          if-no-files-found: error
+          retention-days: 14

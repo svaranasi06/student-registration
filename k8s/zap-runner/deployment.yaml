@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: student-registration-zap
+  namespace: zap-runner
+  labels:
+    app: student-registration-zap
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: student-registration-zap
+  template:
+    metadata:
+      labels:
+        app: student-registration-zap
+    spec:
+      serviceAccountName: zap-runner-ksa
+      nodeSelector:
+        workload: zap-runner
+      containers:
+        - name: application
+          image: asia-south1-docker.pkg.dev/pe3-devops-training-svaranasi/pe3-svaranasi-zap-runner-images/student-registration:zap-runner-d869188
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 5000
+          env:
+            - name: PORT
+              value: "5000"
+            - name: DB_HOST
+              value: "127.0.0.1"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_NAME
+              value: "studentdb"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: zap-db-credentials
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zap-db-credentials
+                  key: DB_PASSWORD
+            - name: BUCKET_NAME
+              value: "pe3-svaranasi-zap-runner-files-1055111006872"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+        - name: cloud-sql-auth-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2
+          args:
+            - "--structured-logs"
+            - "--port=3306"
+            - "pe3-devops-training-svaranasi:asia-south1:pe3-svaranasi-zap-runner-mysql"
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
