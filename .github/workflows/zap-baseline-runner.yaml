@@ -86,6 +86,7 @@ jobs:
 
           docker create \
             --name zap-baseline-container \
+            --user 0:0 \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py \
             -t "${{ inputs.target_url }}" \
